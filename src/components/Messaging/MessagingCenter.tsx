@@ -2,11 +2,10 @@ import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { chatService, Conversation } from '../../services/chatService';
-import { vehicleService } from '../../services/vehicleService';
+import { userService, UserProfile, OnlineUser } from '../../services/userService';
 import ConversationList from '../Chat/ConversationList';
 import ChatWindow from '../Chat/ChatWindow';
 import { 
-  Car, 
   ArrowLeft, 
   MessageCircle, 
   Users, 
@@ -19,49 +18,54 @@ const MessagingCenter = () => {
   const { user } = useAuth();
   const [selectedConversation, setSelectedConversation] = useState<Conversation | null>(null);
   const [showNewConversationModal, setShowNewConversationModal] = useState(false);
-  const [availableUsers, setAvailableUsers] = useState<any[]>([]);
+  const [availableUsers, setAvailableUsers] = useState<UserProfile[]>([]);
+  const [onlineUsers, setOnlineUsers] = useState<OnlineUser[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [loading, setLoading] = useState(false);
+  const [userFilter, setUserFilter] = useState<'all' | 'online' | 'owners' | 'drivers'>('all');
 
-  // Load available users for new conversations
+  // Load available users for new conversations and subscribe to online users
   useEffect(() => {
     if (showNewConversationModal) {
       loadAvailableUsers();
     }
   }, [showNewConversationModal]);
 
+  // Subscribe to online users immediately when component mounts
+  useEffect(() => {
+    if (!user) return;
+
+    console.log('🔄 MessagingCenter: Setting up online users subscription');
+    
+    // Subscribe to online users for real-time presence (always active)
+    const unsubscribeOnline = userService.subscribeToOnlineUsers(user.id, (online) => {
+      setOnlineUsers(online);
+      console.log('👥 MessagingCenter: Online users updated:', online.length, online);
+    });
+
+    return () => {
+      console.log('🔄 MessagingCenter: Cleaning up online users subscription');
+      unsubscribeOnline();
+    };
+  }, [user]);
+
   const loadAvailableUsers = async () => {
+    if (!user) return;
+    
     try {
       setLoading(true);
       
-      // For demo purposes, we'll use vehicle owners/drivers from the vehicles collection
-      // In a real app, you'd have a dedicated users search endpoint
-      const unsubscribe = vehicleService.subscribeToVehicles((vehicles) => {
-        const uniqueUsers = vehicles
-          .filter(vehicle => vehicle.ownerId !== user?.id) // Exclude current user
-          .reduce((acc: any[], vehicle) => {
-            const existingUser = acc.find(u => u.id === vehicle.ownerId);
-            if (!existingUser) {
-              acc.push({
-                id: vehicle.ownerId,
-                name: vehicle.ownerName,
-                role: 'owner' as const,
-                vehicles: [vehicle]
-              });
-            } else {
-              existingUser.vehicles.push(vehicle);
-            }
-            return acc;
-          }, []);
-        
-        setAvailableUsers(uniqueUsers);
+      // Subscribe to real-time user updates (only for the modal)
+      const unsubscribeUsers = userService.subscribeToAllUsers(user.id, (users) => {
+        setAvailableUsers(users);
         setLoading(false);
+        console.log('✅ Available users updated for modal:', users.length);
       });
 
-      // Clean up subscription when modal closes
-      return unsubscribe;
+      // Return cleanup function (online users subscription is handled separately)
+      return unsubscribeUsers;
     } catch (error) {
-      console.error('Error loading users:', error);
+      console.error('❌ Error loading users:', error);
       setLoading(false);
     }
   };
@@ -121,9 +125,30 @@ const MessagingCenter = () => {
     }
   };
 
-  const filteredUsers = availableUsers.filter(user =>
-    user.name.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  const filteredUsers = availableUsers.filter(targetUser => {
+    // Text search filter
+    const matchesSearch = searchQuery === '' || 
+      targetUser.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      targetUser.email.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (targetUser.location && targetUser.location.toLowerCase().includes(searchQuery.toLowerCase()));
+    
+    // User filter
+    const matchesFilter = (() => {
+      switch (userFilter) {
+        case 'online':
+          return onlineUsers.some(ou => ou.id === targetUser.id);
+        case 'owners':
+          return targetUser.role === 'owner';
+        case 'drivers':
+          return targetUser.role === 'driver';
+        case 'all':
+        default:
+          return true;
+      }
+    })();
+    
+    return matchesSearch && matchesFilter;
+  });
 
   const getOtherParticipant = (conversation: Conversation) => {
     const participantIds = Object.keys(conversation.participants);
@@ -159,8 +184,35 @@ const MessagingCenter = () => {
             
             <div className="flex items-center space-x-4">
               <div className="flex items-center space-x-2 text-sm text-gray-500">
-                <div className="w-2 h-2 bg-green-500 rounded-full"></div>
-                <span>Online</span>
+                <div className={`w-2 h-2 rounded-full ${onlineUsers.length > 0 ? 'bg-green-500 animate-pulse' : 'bg-gray-400'}`}></div>
+                <span>{onlineUsers.length} users online</span>
+                {process.env.NODE_ENV === 'development' && (
+                  <div className="flex space-x-1">
+                    <button
+                      onClick={() => {
+                        console.log('🔍 Current online users state:', onlineUsers);
+                        console.log('🔍 Current available users state:', availableUsers);
+                        if ((window as any).userService) {
+                          (window as any).userService.testOnlineUsers();
+                        }
+                      }}
+                      className="text-xs bg-gray-200 px-2 py-1 rounded"
+                    >
+                      Users
+                    </button>
+                    <button
+                      onClick={() => {
+                        console.log('🔍 Current conversations state:', selectedConversation);
+                        if ((window as any).chatService) {
+                          (window as any).chatService.debugCollections();
+                        }
+                      }}
+                      className="text-xs bg-blue-200 px-2 py-1 rounded"
+                    >
+                      Chat
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -244,6 +296,26 @@ const MessagingCenter = () => {
               </div>
             </div>
 
+            {/* User Filters */}
+            <div className="px-6 py-3 border-b border-gray-200">
+              <div className="flex space-x-2">
+                {['all', 'online', 'owners', 'drivers'].map((filter) => (
+                  <button
+                    key={filter}
+                    onClick={() => setUserFilter(filter as typeof userFilter)}
+                    className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${
+                      userFilter === filter
+                        ? 'bg-blue-100 text-blue-700'
+                        : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                    }`}
+                  >
+                    {filter.charAt(0).toUpperCase() + filter.slice(1)}
+                    {filter === 'online' && ` (${onlineUsers.length})`}
+                  </button>
+                ))}
+              </div>
+            </div>
+
             {/* Modal Content */}
             <div className="max-h-96 overflow-y-auto">
               {loading ? (
@@ -260,70 +332,81 @@ const MessagingCenter = () => {
                 </div>
               ) : (
                 <div className="divide-y divide-gray-100">
-                  {filteredUsers.map((targetUser) => (
-                    <div key={targetUser.id} className="p-4">
-                      <div className="flex items-center justify-between mb-3">
-                        <div className="flex items-center space-x-3">
-                          <div className="w-10 h-10 bg-gradient-to-br from-blue-600 to-purple-700 rounded-full flex items-center justify-center">
-                            <span className="text-white font-medium text-sm">
-                              {targetUser.name.charAt(0).toUpperCase()}
-                            </span>
-                          </div>
-                          <div>
-                            <h3 className="font-medium text-gray-900">{targetUser.name}</h3>
-                            <p className="text-sm text-gray-500 capitalize">
-                              {targetUser.role} • {targetUser.vehicles?.length || 0} vehicles
-                            </p>
-                          </div>
-                        </div>
-                        
-                        <button
-                          onClick={() => handleStartConversation(targetUser)}
-                          className="bg-blue-600 text-white px-3 py-1 rounded text-sm hover:bg-blue-700 transition-colors"
-                        >
-                          Message
-                        </button>
-                      </div>
-
-                      {/* User's vehicles */}
-                      {targetUser.vehicles && targetUser.vehicles.length > 0 && (
-                        <div className="ml-13 space-y-2">
-                          <p className="text-xs font-medium text-gray-600 uppercase tracking-wide">
-                            Available Vehicles
-                          </p>
-                          {targetUser.vehicles.slice(0, 3).map((vehicle: any) => (
-                            <button
-                              key={vehicle.id}
-                              onClick={() => handleStartConversation(targetUser, {
-                                vehicleId: vehicle.id,
-                                vehicleMake: vehicle.make,
-                                vehiclePlate: vehicle.plate
-                              })}
-                              className="w-full text-left p-2 bg-gray-50 hover:bg-gray-100 rounded-lg transition-colors"
-                            >
-                              <div className="flex items-center space-x-2">
-                                <Car className="w-4 h-4 text-gray-600" />
-                                <div className="flex-1 min-w-0">
-                                  <p className="text-sm font-medium text-gray-900 truncate">
-                                    {vehicle.make} ({vehicle.plate})
-                                  </p>
-                                  <p className="text-xs text-gray-500">
-                                    R{vehicle.weeklyRate}/week • {vehicle.location}
-                                  </p>
-                                </div>
+                  {filteredUsers.map((targetUser) => {
+                    const isOnline = onlineUsers.some(ou => ou.id === targetUser.id);
+                    const onlineUser = onlineUsers.find(ou => ou.id === targetUser.id);
+                    
+                    return (
+                      <div key={targetUser.id} className="p-4 hover:bg-gray-50 transition-colors">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center space-x-3">
+                            <div className="relative">
+                              <div className="w-10 h-10 bg-gradient-to-br from-blue-600 to-purple-700 rounded-full flex items-center justify-center">
+                                <span className="text-white font-medium text-sm">
+                                  {targetUser.name.charAt(0).toUpperCase()}
+                                </span>
                               </div>
-                            </button>
-                          ))}
+                              {/* Online Status Indicator */}
+                              {isOnline && (
+                                <div className={`absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full border-2 border-white ${
+                                  onlineUser?.status === 'online' ? 'bg-green-500' :
+                                  onlineUser?.status === 'away' ? 'bg-yellow-500' :
+                                  onlineUser?.status === 'busy' ? 'bg-red-500' : 'bg-gray-400'
+                                }`}></div>
+                              )}
+                            </div>
+                            <div className="flex-1">
+                              <div className="flex items-center space-x-2">
+                                <h3 className="font-medium text-gray-900">{targetUser.name}</h3>
+                                {targetUser.isVerified && (
+                                  <div className="w-4 h-4 bg-blue-500 rounded-full flex items-center justify-center">
+                                    <svg className="w-2.5 h-2.5 text-white" fill="currentColor" viewBox="0 0 20 20">
+                                      <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                                    </svg>
+                                  </div>
+                                )}
+                              </div>
+                              <div className="flex items-center space-x-2 text-sm text-gray-500">
+                                <span className="capitalize">{targetUser.role}</span>
+                                {isOnline && (
+                                  <>
+                                    <span>•</span>
+                                    <span className={`${
+                                      onlineUser?.status === 'online' ? 'text-green-600' :
+                                      onlineUser?.status === 'away' ? 'text-yellow-600' :
+                                      onlineUser?.status === 'busy' ? 'text-red-600' : 'text-gray-500'
+                                    }`}>
+                                      {onlineUser?.status === 'online' ? 'Online' :
+                                       onlineUser?.status === 'away' ? 'Away' :
+                                       onlineUser?.status === 'busy' ? 'Busy' : 'Offline'}
+                                    </span>
+                                  </>
+                                )}
+                                {targetUser.location && (
+                                  <>
+                                    <span>•</span>
+                                    <span>{targetUser.location}</span>
+                                  </>
+                                )}
+                              </div>
+                              {onlineUser?.currentActivity && (
+                                <p className="text-xs text-gray-400 mt-1">
+                                  {onlineUser.currentActivity}
+                                </p>
+                              )}
+                            </div>
+                          </div>
                           
-                          {targetUser.vehicles.length > 3 && (
-                            <p className="text-xs text-gray-500 ml-6">
-                              +{targetUser.vehicles.length - 3} more vehicles
-                            </p>
-                          )}
+                          <button
+                            onClick={() => handleStartConversation(targetUser)}
+                            className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-blue-700 transition-colors"
+                          >
+                            Message
+                          </button>
                         </div>
-                      )}
-                    </div>
-                  ))}
+                      </div>
+                    );
+                  })}
                 </div>
               )}
             </div>

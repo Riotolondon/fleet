@@ -1,6 +1,7 @@
 import { createContext, useContext, useState, useEffect } from 'react';
 import { User as FirebaseUser } from 'firebase/auth';
 import { authService, User } from '../services/authService';
+import { userService } from '../services/userService';
 
 // Re-export User interface for backward compatibility
 export type { User } from '../services/authService';
@@ -40,9 +41,40 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         console.log('👤 AuthContext: Firebase user found, loading data...', firebaseUser.uid);
         const userData = await authService.getUserData(firebaseUser.uid);
         setUser(userData);
+        
+        // Start presence tracking for the user
+        if (userData) {
+          try {
+            // Ensure user profile exists in userService first
+            const existingProfile = await userService.getUserProfile(userData.id);
+            if (!existingProfile) {
+              console.log('🔄 AuthContext: User profile not found, initializing...');
+              await userService.initializeUserProfile(userData.id, {
+                name: userData.name,
+                email: userData.email,
+                role: userData.role,
+                phone: userData.phone
+              });
+            }
+            
+            await userService.startPresenceTracking(userData.id, userData.name);
+            console.log('✅ AuthContext: Presence tracking started');
+          } catch (error) {
+            console.warn('⚠️ AuthContext: Failed to start presence tracking:', error);
+          }
+        }
       } else {
         // User is signed out
         console.log('🚪 AuthContext: No Firebase user found');
+        
+        // Stop presence tracking
+        try {
+          await userService.stopPresenceTracking();
+          console.log('✅ AuthContext: Presence tracking stopped');
+        } catch (error) {
+          console.warn('⚠️ AuthContext: Failed to stop presence tracking:', error);
+        }
+        
         setUser(null);
       }
       setLoading(false);
@@ -59,6 +91,27 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const userData = await authService.signIn(email, password);
       console.log('✅ AuthContext: Login successful, setting user:', userData);
       setUser(userData);
+      
+      // Start presence tracking
+      try {
+        // Ensure user profile exists in userService first
+        const existingProfile = await userService.getUserProfile(userData.id);
+        if (!existingProfile) {
+          console.log('🔄 AuthContext: User profile not found during login, initializing...');
+          await userService.initializeUserProfile(userData.id, {
+            name: userData.name,
+            email: userData.email,
+            role: userData.role,
+            phone: userData.phone
+          });
+        }
+        
+        await userService.startPresenceTracking(userData.id, userData.name);
+        console.log('✅ AuthContext: Presence tracking started for login');
+      } catch (error) {
+        console.warn('⚠️ AuthContext: Failed to start presence tracking on login:', error);
+      }
+      
       setLoading(false);
     } catch (error) {
       console.error('❌ AuthContext: Login failed:', error);
@@ -80,6 +133,22 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const userData = await authService.signUp(email, password, name, role, phone);
       console.log('✅ AuthContext: Signup successful, setting user:', userData);
       setUser(userData);
+      
+      // Initialize user profile in userService and start presence tracking
+      try {
+        await userService.initializeUserProfile(userData.id, {
+          name: userData.name,
+          email: userData.email,
+          role: userData.role,
+          phone: userData.phone
+        });
+        
+        await userService.startPresenceTracking(userData.id, userData.name);
+        console.log('✅ AuthContext: User profile initialized and presence tracking started');
+      } catch (error) {
+        console.warn('⚠️ AuthContext: Failed to initialize user profile or start presence:', error);
+      }
+      
       setLoading(false);
     } catch (error) {
       console.error('❌ AuthContext: Signup failed:', error);
@@ -91,6 +160,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const logout = async (): Promise<void> => {
     try {
       console.log('🚪 AuthContext: Signing out...');
+      
+      // Stop presence tracking first
+      try {
+        await userService.stopPresenceTracking();
+        console.log('✅ AuthContext: Presence tracking stopped for logout');
+      } catch (error) {
+        console.warn('⚠️ AuthContext: Failed to stop presence tracking on logout:', error);
+      }
+      
       await authService.signOut();
       setUser(null);
       console.log('✅ AuthContext: Logout successful');

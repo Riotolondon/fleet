@@ -133,7 +133,8 @@ class ChatService {
           },
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
-          vehicleContext
+          // Only include vehicleContext if it's defined
+          ...(vehicleContext && { vehicleContext })
         };
         
         await setDoc(conversationRef, conversationData);
@@ -175,8 +176,9 @@ class ChatService {
         timestamp: serverTimestamp(),
         read: false,
         type: messageType,
-        messageData,
-        edited: false
+        edited: false,
+        // Only include messageData if it's defined
+        ...(messageData && { messageData })
       };
 
       // Add message to messages collection
@@ -243,23 +245,56 @@ class ChatService {
     callback: (messages: ChatMessage[]) => void
   ): () => void {
     try {
+      console.log('🔄 Setting up messages subscription for conversation:', conversationId);
+      
+      // Simplified query without orderBy to avoid index issues
       const messagesQuery = query(
         collection(db, this.MESSAGES_COLLECTION),
         where('conversationId', '==', conversationId),
-        orderBy('timestamp', 'asc'),
         limit(100) // Load last 100 messages initially
       );
 
       return onSnapshot(messagesQuery, (snapshot) => {
-        const messages: ChatMessage[] = snapshot.docs.map(doc => ({
-          id: doc.id,
-          ...doc.data()
-        } as ChatMessage));
+        console.log('📡 Messages snapshot received for conversation:', conversationId, {
+          size: snapshot.size,
+          docs: snapshot.docs.length,
+          empty: snapshot.empty
+        });
+
+        const messages: ChatMessage[] = snapshot.docs
+          .map(doc => {
+            const data = doc.data();
+            console.log('💌 Processing message:', doc.id, {
+              senderId: data.senderId,
+              message: data.message,
+              timestamp: data.timestamp
+            });
+            return {
+              id: doc.id,
+              ...data
+            } as ChatMessage;
+          })
+          .sort((a, b) => {
+            // Sort by timestamp client-side
+            if (a.timestamp && b.timestamp) {
+              return a.timestamp.toDate() - b.timestamp.toDate();
+            }
+            return 0;
+          });
         
-        console.log('💬 Messages updated for conversation:', conversationId, messages.length);
+        console.log('💬 Final messages for conversation:', conversationId, {
+          total: messages.length,
+          messageIds: messages.map(m => m.id)
+        });
         callback(messages);
       }, (error) => {
         console.error('❌ Error in messages subscription:', error);
+        console.error('Error details:', {
+          code: error.code,
+          message: error.message,
+          conversationId: conversationId,
+          collection: this.MESSAGES_COLLECTION
+        });
         callback([]);
       });
     } catch (error) {
@@ -276,26 +311,56 @@ class ChatService {
     callback: (conversations: Conversation[]) => void
   ): () => void {
     try {
+      console.log('🔄 Setting up conversations subscription for user:', userId);
+      
+      // Simplified query - get all conversations and filter client-side for now
       const conversationsQuery = query(
-        collection(db, this.CONVERSATIONS_COLLECTION),
-        where(`participants.${userId}`, '!=', null),
-        orderBy('updatedAt', 'desc')
+        collection(db, this.CONVERSATIONS_COLLECTION)
       );
 
       return onSnapshot(conversationsQuery, (snapshot) => {
-        const conversations: Conversation[] = snapshot.docs.map(doc => ({
-          id: doc.id,
-          ...doc.data()
-        } as Conversation));
+        console.log('📡 Conversations snapshot received:', {
+          size: snapshot.size,
+          docs: snapshot.docs.length,
+          empty: snapshot.empty
+        });
+
+        // Filter conversations where user is a participant and sort client-side
+        const conversations: Conversation[] = snapshot.docs
+          .map(doc => ({
+            id: doc.id,
+            ...doc.data()
+          } as Conversation))
+          .filter(conv => {
+            // Check if user is in participants
+            const isParticipant = conv.participants && conv.participants[userId];
+            console.log('🔍 Checking conversation:', conv.id, 'User is participant:', !!isParticipant);
+            return isParticipant;
+          })
+          .sort((a, b) => {
+            // Sort by updatedAt client-side
+            if (a.updatedAt && b.updatedAt) {
+              return b.updatedAt.toDate() - a.updatedAt.toDate();
+            }
+            return 0;
+          });
         
-        console.log('📋 Conversations updated for user:', userId, conversations.length);
+        console.log('📋 Final conversations for user:', userId, {
+          total: conversations.length,
+          conversationIds: conversations.map(c => c.id)
+        });
         callback(conversations);
       }, (error) => {
         console.error('❌ Error in conversations subscription:', error);
+        console.error('Error details:', {
+          code: error.code,
+          message: error.message,
+          userId: userId
+        });
         if (error.code === 'permission-denied') {
           console.warn('⚠️ Permission denied for conversations - user may not be authenticated');
-          callback([]);
         }
+        callback([]);
       });
     } catch (error) {
       console.error('❌ Error subscribing to conversations:', error);
@@ -524,6 +589,49 @@ class ChatService {
   }
 
   /**
+   * Debug function to check database collections
+   * Call from browser console: window.chatService.debugCollections()
+   */
+  async debugCollections(): Promise<void> {
+    try {
+      console.log('🧪 Debugging chat collections...');
+      
+      // Check conversations collection
+      const conversationsSnapshot = await getDocs(collection(db, this.CONVERSATIONS_COLLECTION));
+      console.log('📊 Conversations Collection:', {
+        totalDocs: conversationsSnapshot.size,
+        docs: conversationsSnapshot.docs.map(doc => ({
+          id: doc.id,
+          data: doc.data()
+        }))
+      });
+      
+      // Check messages collection
+      const messagesSnapshot = await getDocs(collection(db, this.MESSAGES_COLLECTION));
+      console.log('📊 Messages Collection:', {
+        totalDocs: messagesSnapshot.size,
+        docs: messagesSnapshot.docs.map(doc => ({
+          id: doc.id,
+          data: doc.data()
+        }))
+      });
+      
+      // Check typing status collection
+      const typingSnapshot = await getDocs(collection(db, this.TYPING_COLLECTION));
+      console.log('📊 Typing Status Collection:', {
+        totalDocs: typingSnapshot.size,
+        docs: typingSnapshot.docs.map(doc => ({
+          id: doc.id,
+          data: doc.data()
+        }))
+      });
+      
+    } catch (error) {
+      console.error('❌ Error debugging collections:', error);
+    }
+  }
+
+  /**
    * Search messages in conversations
    */
   async searchMessages(
@@ -532,14 +640,12 @@ class ChatService {
     maxResults: number = 20
   ): Promise<ChatMessage[]> {
     try {
-      // Get user's conversations first
-      const conversationsQuery = query(
-        collection(db, this.CONVERSATIONS_COLLECTION),
-        where(`participants.${userId}`, '!=', null)
-      );
-      
-      const conversationsSnapshot = await getDocs(conversationsQuery);
-      const conversationIds = conversationsSnapshot.docs.map(doc => doc.id);
+      // Simplified query - get all conversations and filter client-side
+      const conversationsSnapshot = await getDocs(collection(db, this.CONVERSATIONS_COLLECTION));
+      const conversationIds = conversationsSnapshot.docs
+        .map(doc => ({ id: doc.id, ...doc.data() } as Conversation))
+        .filter(conv => conv.participants && conv.participants[userId])
+        .map(conv => conv.id);
 
       if (conversationIds.length === 0) {
         return [];
@@ -573,4 +679,10 @@ class ChatService {
 }
 
 export const chatService = new ChatService();
+
+// Expose chatService globally for debugging
+if (typeof window !== 'undefined') {
+  (window as any).chatService = chatService;
+}
+
 export default chatService; 
