@@ -13,15 +13,24 @@ export interface User {
   id: string;
   email: string;
   name: string;
-  role: 'owner' | 'driver';
+  role: 'owner' | 'driver' | 'admin';
   avatar?: string;
   phone?: string;
   verified: boolean;
   createdAt: string;
+  isAdmin?: boolean;
 }
 
 // TEMPORARY: Using real Firebase (hardcoded config)
 const isDemoMode = false;
+
+// Admin email configuration
+const ADMIN_EMAILS = ['admin@yow.com'];
+
+// Helper function to check if email is admin
+const isAdminEmail = (email: string): boolean => {
+  return ADMIN_EMAILS.includes(email.toLowerCase());
+};
 
 export const authService = {
   // Sign up with email and password
@@ -116,15 +125,58 @@ export const authService = {
       const userCredential = await signInWithEmailAndPassword(auth, email, password);
       const firebaseUser = userCredential.user;
       
+      // Check if this is an admin user
+      const isAdmin = isAdminEmail(firebaseUser.email!);
+      console.log('🔍 Admin check:', { email: firebaseUser.email, isAdmin });
+
       // Get user data from Firestore with error handling
       try {
         const userDoc = await getDoc(doc(db, 'users', firebaseUser.uid));
         
         if (!userDoc.exists()) {
-          throw new Error('User data not found in Firestore');
+          // For admin users, create admin profile if it doesn't exist
+          if (isAdmin) {
+            console.log('👑 Creating admin profile...');
+            const adminData: User = {
+              id: firebaseUser.uid,
+              email: firebaseUser.email!,
+              name: firebaseUser.displayName || 'Administrator',
+              role: 'admin',
+              verified: true,
+              isAdmin: true,
+              createdAt: new Date().toISOString()
+            };
+            
+            await setDoc(doc(db, 'users', firebaseUser.uid), adminData);
+            console.log('✅ Admin profile created');
+            return adminData;
+          } else {
+            throw new Error('User data not found in Firestore');
+          }
         }
         
-        return userDoc.data() as User;
+        const userData = userDoc.data() as User;
+        
+        // Update admin status if needed
+        if (isAdmin && userData.role !== 'admin') {
+          console.log('👑 Updating user to admin role...');
+          const updatedData = {
+            ...userData,
+            role: 'admin' as const,
+            isAdmin: true,
+            verified: true
+          };
+          
+          await updateDoc(doc(db, 'users', firebaseUser.uid), {
+            role: 'admin',
+            isAdmin: true,
+            verified: true
+          });
+          
+          return updatedData;
+        }
+        
+        return userData;
       } catch (firestoreError: any) {
         console.error('❌ Failed to get user data from Firestore:', firestoreError.message);
         
@@ -133,9 +185,10 @@ export const authService = {
         return {
           id: firebaseUser.uid,
           email: firebaseUser.email!,
-          name: firebaseUser.displayName || 'User',
-          role: 'driver', // Default role - user may need to update this
-          verified: firebaseUser.emailVerified,
+          name: firebaseUser.displayName || (isAdmin ? 'Administrator' : 'User'),
+          role: isAdmin ? 'admin' : 'driver',
+          verified: isAdmin ? true : firebaseUser.emailVerified,
+          isAdmin: isAdmin,
           createdAt: firebaseUser.metadata.creationTime || new Date().toISOString()
         };
       }

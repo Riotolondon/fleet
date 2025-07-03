@@ -5,9 +5,11 @@ import LoginPage from './components/Auth/LoginPage';
 import SignupPage from './components/Auth/SignupPage';
 import DashboardRouter from './components/Dashboard/DashboardRouter';
 import ProtectedRoute from './components/Auth/ProtectedRoute';
+import AdminRedirect from './components/Auth/AdminRedirect';
 import NotificationCenter from './components/Notifications/NotificationCenter';
 import MessagingCenter from './components/Messaging/MessagingCenter';
 import Marketplace from './components/Marketplace';
+import AdminDashboard from './components/Admin/AdminDashboard';
 
 function App() {
   return (
@@ -23,6 +25,11 @@ function App() {
           <Route path="/login" element={<LoginPage />} />
           <Route path="/signup" element={<SignupPage />} />
           <Route path="/dashboard" element={
+            <ProtectedRoute>
+              <AdminRedirect />
+            </ProtectedRoute>
+          } />
+          <Route path="/user-dashboard" element={
             <ProtectedRoute>
               <DashboardRouter />
             </ProtectedRoute>
@@ -40,6 +47,11 @@ function App() {
           <Route path="/marketplace" element={
             <ProtectedRoute>
               <Marketplace />
+            </ProtectedRoute>
+          } />
+          <Route path="/admin" element={
+            <ProtectedRoute>
+              <AdminDashboard />
             </ProtectedRoute>
           } />
           <Route path="*" element={<Navigate to="/" replace />} />

@@ -38,7 +38,7 @@ const Marketplace = () => {
             {user?.role === 'owner' ? ' As a fleet owner, you can manage your vehicles through your dashboard.' : ''}
           </p>
           <Link 
-            to={user?.role === 'owner' ? '/owner-dashboard' : '/dashboard'}
+            to="/dashboard"
             className="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 transition-colors"
           >
             Go to Dashboard

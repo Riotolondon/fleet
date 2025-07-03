@@ -45,16 +45,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         // Start presence tracking for the user
         if (userData) {
           try {
-            // Ensure user profile exists in userService first
-            const existingProfile = await userService.getUserProfile(userData.id);
-            if (!existingProfile) {
-              console.log('🔄 AuthContext: User profile not found, initializing...');
-              await userService.initializeUserProfile(userData.id, {
-                name: userData.name,
-                email: userData.email,
-                role: userData.role,
-                phone: userData.phone
-              });
+            // Ensure user profile exists in userService first (skip for admin users)
+            if (userData.role !== 'admin') {
+              const existingProfile = await userService.getUserProfile(userData.id);
+              if (!existingProfile) {
+                console.log('🔄 AuthContext: User profile not found, initializing...');
+                await userService.initializeUserProfile(userData.id, {
+                  name: userData.name,
+                  email: userData.email,
+                  role: userData.role,
+                  phone: userData.phone
+                });
+              }
             }
             
             await userService.startPresenceTracking(userData.id, userData.name);
@@ -94,16 +96,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       
       // Start presence tracking
       try {
-        // Ensure user profile exists in userService first
-        const existingProfile = await userService.getUserProfile(userData.id);
-        if (!existingProfile) {
-          console.log('🔄 AuthContext: User profile not found during login, initializing...');
-          await userService.initializeUserProfile(userData.id, {
-            name: userData.name,
-            email: userData.email,
-            role: userData.role,
-            phone: userData.phone
-          });
+        // Ensure user profile exists in userService first (skip for admin users)
+        if (userData.role !== 'admin') {
+          const existingProfile = await userService.getUserProfile(userData.id);
+          if (!existingProfile) {
+            console.log('🔄 AuthContext: User profile not found during login, initializing...');
+            await userService.initializeUserProfile(userData.id, {
+              name: userData.name,
+              email: userData.email,
+              role: userData.role,
+              phone: userData.phone
+            });
+          }
         }
         
         await userService.startPresenceTracking(userData.id, userData.name);
@@ -136,12 +140,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       
       // Initialize user profile in userService and start presence tracking
       try {
-        await userService.initializeUserProfile(userData.id, {
-          name: userData.name,
-          email: userData.email,
-          role: userData.role,
-          phone: userData.phone
-        });
+        // Only initialize user profile for non-admin users
+        if (userData.role !== 'admin') {
+          await userService.initializeUserProfile(userData.id, {
+            name: userData.name,
+            email: userData.email,
+            role: userData.role,
+            phone: userData.phone
+          });
+        }
         
         await userService.startPresenceTracking(userData.id, userData.name);
         console.log('✅ AuthContext: User profile initialized and presence tracking started');

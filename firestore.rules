@@ -4,7 +4,7 @@ service cloud.firestore {
     // Users collection - allow authenticated users to read all users, write own data
     match /users/{userId} {
       allow read: if request.auth != null; // All authenticated users can read user profiles
-      allow write: if request.auth != null && request.auth.uid == userId; // Users can only update their own profile
+      allow write: if request.auth != null && (request.auth.uid == userId || isAdmin()); // Users can update their own profile, admins can update any profile
     }
     
     // Online users collection - for real-time presence tracking
@@ -31,7 +31,7 @@ service cloud.firestore {
       allow read: if request.auth != null;
       allow create: if request.auth != null;
       allow update, delete: if request.auth != null && 
-        (resource == null || resource.data.ownerId == request.auth.uid);
+        (resource == null || resource.data.ownerId == request.auth.uid || isAdmin());
     }
     
     // Applications collection - for driver applications to vehicles
@@ -41,7 +41,8 @@ service cloud.firestore {
       allow update: if request.auth != null && 
         (resource == null || 
          resource.data.driverId == request.auth.uid || 
-         resource.data.ownerId == request.auth.uid);
+         resource.data.ownerId == request.auth.uid || 
+         isAdmin());
     }
     
     // Chat conversations - simplified permissions for development
@@ -62,6 +63,61 @@ service cloud.firestore {
     // Typing status - allow all authenticated users to manage typing status
     match /typingStatus/{statusId} {
       allow read, write: if request.auth != null;
+    }
+    
+    // Admin collections - restrict access to admin users only
+    function isAdmin() {
+      return request.auth != null && 
+        (request.auth.token.email == 'admin@yow.com' || 
+         (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin'));
+    }
+    
+    // Admin reports collection
+    match /adminReports/{reportId} {
+      allow read, write: if isAdmin();
+    }
+    
+    // Admin announcements collection  
+    match /adminAnnouncements/{announcementId} {
+      allow read: if request.auth != null; // All users can read announcements
+      allow write: if isAdmin(); // Only admins can create/modify announcements
+    }
+    
+    // Admin analytics collection
+    match /adminAnalytics/{analyticsId} {
+      allow read, write: if isAdmin();
+    }
+    
+    // Admin settings collection
+    match /adminSettings/{settingId} {
+      allow read, write: if isAdmin();
+    }
+    
+    // Admin logs collection
+    match /adminLogs/{logId} {
+      allow read, write: if isAdmin();
+    }
+    
+    // Admin logs collection (alternate naming)
+    match /admin_logs/{logId} {
+      allow read, write: if isAdmin();
+    }
+    
+    // Reports collection (used by admin service)
+    match /reports/{reportId} {
+      allow read, write: if isAdmin();
+    }
+    
+    // Announcements collection (used by admin service)
+    match /announcements/{announcementId} {
+      allow read: if request.auth != null; // All users can read announcements
+      allow write: if isAdmin(); // Only admins can create/modify announcements
+    }
+    
+    // Analytics collection (used by admin service)
+    match /analytics/{analyticsId} {
+      allow read, write: if isAdmin();
     }
   }
 } 
