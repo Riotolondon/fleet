@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { 
   ArrowLeft,
   Car,
@@ -17,10 +17,12 @@ import {
 } from 'lucide-react';
 import { vehicleService, Vehicle } from '../services/vehicleService';
 import { useAuth } from '../contexts/AuthContext';
+import { chatService } from '../services/chatService';
 import VehicleApplicationModal from './VehicleApplicationModal';
 
 const Marketplace = () => {
   const { user } = useAuth();
+  const navigate = useNavigate();
   
   // Restrict access to drivers only
   if (user?.role !== 'driver') {
@@ -77,6 +79,39 @@ const Marketplace = () => {
     }
     setSelectedVehicleForApplication(vehicle);
     setShowApplicationModal(true);
+  };
+
+  // Handle messaging vehicle owner
+  const handleMessageOwner = async (vehicle: Vehicle) => {
+    if (!user?.id) {
+      alert('Please log in to message vehicle owners');
+      return;
+    }
+
+    if (user.id === vehicle.ownerId) {
+      alert('You cannot message yourself');
+      return;
+    }
+
+    try {
+      // Start a conversation with the vehicle owner
+      const conversationId = await chatService.startVehicleConversation(
+        user.id,
+        user.name,
+        vehicle.ownerId,
+        vehicle.ownerName,
+        vehicle.id,
+        vehicle.make,
+        vehicle.plate,
+        `Hi! I'm interested in your ${vehicle.make} (${vehicle.plate}). Is it available for rent?`
+      );
+
+      // Navigate to messaging center with the conversation
+      navigate(`/messages?conversation=${conversationId}`);
+    } catch (error) {
+      console.error('Error starting conversation:', error);
+      alert('Failed to start conversation. Please try again.');
+    }
   };
 
 
@@ -256,6 +291,14 @@ const Marketplace = () => {
                       >
                         {vehicle.status === 'available' ? 'Apply Now' : 'Not Available'}
                       </button>
+                      
+                      <button 
+                        onClick={() => handleMessageOwner(vehicle)}
+                        className="flex items-center justify-center px-3 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors"
+                        title="Message owner"
+                      >
+                        <MessageCircle className="w-4 h-4" />
+                      </button>
                     </div>
                   </div>
                 </div>
@@ -268,9 +311,21 @@ const Marketplace = () => {
 
         {/* Messages Tab */}
         {activeTab === 'messages' && (
-          <div className="bg-white rounded-xl shadow-sm border p-6">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4">Messages</h3>
-            <p className="text-gray-600">Direct messaging system between fleet owners and drivers coming soon...</p>
+          <div className="bg-white rounded-xl shadow-sm border p-8 text-center">
+            <div className="w-16 h-16 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-4">
+              <MessageCircle className="w-8 h-8 text-blue-600" />
+            </div>
+            <h3 className="text-lg font-semibold text-gray-900 mb-2">Message Center</h3>
+            <p className="text-gray-600 mb-6">
+              Chat with vehicle owners about rentals, ask questions, and coordinate pickups.
+            </p>
+            <Link 
+              to="/messages"
+              className="inline-flex items-center space-x-2 bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700 transition-colors"
+            >
+              <MessageCircle className="w-4 h-4" />
+              <span>Open Messaging Center</span>
+            </Link>
           </div>
         )}
       </div>
